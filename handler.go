@@ -59,6 +59,7 @@ func YAMLHandler(yml []byte, fallback http.Handler) (http.HandlerFunc, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Note: duplicate URLs are squashed
 	pathsToUrls := map[string]string{}
 	for _, v := range yamlPaths {
 		pathsToUrls[v.Path] = v.Url

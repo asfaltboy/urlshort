@@ -1,33 +1,33 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
 
 	"github.com/asfaltboy/urlshort"
 )
 
 func main() {
-	mux := defaultMux()
-
-	// Build the MapHandler using the mux as the fallback
-	pathsToUrls := map[string]string{
-		"/urlshort-godoc": "https://godoc.org/github.com/gophercises/urlshort",
-		"/yaml-godoc":     "https://godoc.org/gopkg.in/yaml.v2",
-	}
-	mapHandler := urlshort.MapHandler(pathsToUrls, mux)
-
-	// Build the YAMLHandler using the mapHandler as the
-	// fallback
-	yaml := `
-- path: /urlshort
-  url: https://github.com/gophercises/urlshort
-- path: /urlshort-final
-  url: https://github.com/gophercises/urlshort/tree/solution
-`
-	yamlHandler, err := urlshort.YAMLHandler([]byte(yaml), mapHandler)
+	path := flag.String("config", "example.yaml", "Path to yaml config file (see example.yaml)")
+	flag.Parse()
+	file, err := os.Open(*path)
 	if err != nil {
-		panic(err)
+		log.Fatalf("could not open config file %s: %v", *path, err)
+	}
+	yaml, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("could not parse config file: %v", err)
+	}
+
+	// Build the YAMLHandler using default 404 fallback mux
+	fallback := defaultMux()
+	yamlHandler, err := urlshort.YAMLHandler([]byte(yaml), fallback)
+	if err != nil {
+		log.Panicf("cannot build yaml handler: %v", err)
 	}
 	fmt.Println("Starting the server on :8080")
 	http.ListenAndServe(":8080", yamlHandler)
