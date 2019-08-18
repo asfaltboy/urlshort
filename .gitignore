@@ -4,6 +4,7 @@
 *.so
 *.dylib
 urlshort
+invalid.db
 
 # Test binary, build with `go test -c`
 *.test
