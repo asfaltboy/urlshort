@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 // Build the fallback default mux
@@ -207,6 +209,91 @@ func TestInvalidJSONHandler(t *testing.T) {
 
 	_, err := JSONHandler([]byte(yaml), nil)
 	if err == nil {
+		t.Errorf("Handler did not return error")
+	}
+}
+
+func getBoltHandler(fallback *http.ServeMux, t *testing.T) http.Handler {
+	db, err := bolt.Open("example.db", 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("urlshort"))
+		if b == nil {
+			b, err := tx.CreateBucket([]byte("urlshort"))
+			if err != nil {
+				return err
+			}
+			if err := b.Put(
+				[]byte("/urlshort"), []byte("https://github.com/gophercises/urlshort"),
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := BoltHandler(db, fallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
+}
+
+func TestBoltHandlerMatched(t *testing.T) {
+	req, err := http.NewRequest("GET", "/urlshort", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := getBoltHandler(nil, t)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	res := rr.Result()
+	if status := res.StatusCode; status != http.StatusFound {
+		t.Errorf("Handler returned wrong status code: got %v want %v", status, http.StatusFound)
+	}
+
+	expected := "https://github.com/gophercises/urlshort"
+	fmt.Println(res.Header)
+	if expected != res.Header.Get("Location") {
+		t.Errorf("Handler returned wrong location: got %v want %v", res.Header.Get("Location"), expected)
+	}
+}
+
+func TestBoltHandlerNotMatched(t *testing.T) {
+	req, err := http.NewRequest("GET", "/foo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := getDefaultMux()
+	handler := getBoltHandler(mux, t)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	res := rr.Result()
+	if status := res.StatusCode; status != http.StatusOK {
+		t.Errorf("Handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	expected := "Hello, world!"
+	actual, _ := ioutil.ReadAll(res.Body)
+	if expected != string(actual) {
+		t.Errorf("Handler returned wrong location: got %v want %v", actual, expected)
+	}
+}
+
+// TODO: test errors in DB loading / parsing
+func TestBoltHandlerBadDB(t *testing.T) {
+	db, err := bolt.Open("invalid.db", 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := BoltHandler(db, nil); err == nil {
 		t.Errorf("Handler did not return error")
 	}
 }

@@ -2,8 +2,10 @@ package urlshort
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	bolt "go.etcd.io/bbolt"
 	"gopkg.in/yaml.v2"
 )
 
@@ -12,8 +14,13 @@ type mapPathHandler struct {
 	fallback http.Handler
 }
 
+type pathConfig struct {
+	Path string `yaml:"path" json:"path"`
+	URL  string `yaml:"url" json:"url"`
+}
+
 // Generate a path map from a list of maps as per marshalled config, and a fallback
-func newMapPathHandler(shortPaths []marshalledConfig, fallback http.Handler) mapPathHandler {
+func pathConfigToHandler(shortPaths []pathConfig, fallback http.Handler) mapPathHandler {
 	// Note: duplicate URLs are squashed
 	pathsToUrls := map[string]string{}
 	for _, v := range shortPaths {
@@ -42,11 +49,6 @@ func MapHandler(pathsToUrls map[string]string, fallback http.Handler) http.Handl
 	return http.HandlerFunc(m.redirectToPath)
 }
 
-type marshalledConfig struct {
-	Path string `yaml:"path" json:"path"`
-	URL  string `yaml:"url" json:"url"`
-}
-
 // YAMLHandler will parse the provided YAML and then return
 // an http.HandlerFunc that will attempt to map any paths to their
 // corresponding URL. If the path is not provided in the YAML,
@@ -64,12 +66,12 @@ type marshalledConfig struct {
 // a mapping of paths to urls.
 func YAMLHandler(yml []byte, fallback http.Handler) (http.HandlerFunc, error) {
 	// parse YAML input
-	yamlPaths := []marshalledConfig{}
+	yamlPaths := []pathConfig{}
 	err := yaml.UnmarshalStrict(yml, &yamlPaths)
 	if err != nil {
 		return nil, err
 	}
-	m := newMapPathHandler(yamlPaths, fallback)
+	m := pathConfigToHandler(yamlPaths, fallback)
 	return http.HandlerFunc(m.redirectToPath), err
 }
 
@@ -90,11 +92,36 @@ func YAMLHandler(yml []byte, fallback http.Handler) (http.HandlerFunc, error) {
 // a mapping of paths to urls.
 func JSONHandler(j []byte, fallback http.Handler) (http.HandlerFunc, error) {
 	// parse JSON input
-	jsonPaths := []marshalledConfig{}
+	jsonPaths := []pathConfig{}
 	err := json.Unmarshal(j, &jsonPaths)
 	if err != nil {
 		return nil, err
 	}
-	m := newMapPathHandler(jsonPaths, fallback)
-	return http.HandlerFunc(m.redirectToPath), err
+	m := pathConfigToHandler(jsonPaths, fallback)
+	return http.HandlerFunc(m.redirectToPath), nil
+}
+
+// BoltHandler will load url paths from the given DB instance
+// and return http.HandlerFunc. If the path is not found
+// in the db, then the fallback http.Handler will be called
+// instead.
+func BoltHandler(db *bolt.DB, fallback http.Handler) (http.HandlerFunc, error) {
+	paths := map[string]string{}
+	if err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("urlshort"))
+		if b == nil {
+			return errors.New("Db missing bucket 'urlshort'")
+		}
+		if err := b.ForEach(func(key, value []byte) error {
+			paths[string(key)] = string(value)
+			return nil
+		}); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	m := mapPathHandler{paths, fallback}
+	return http.HandlerFunc(m.redirectToPath), nil
 }
