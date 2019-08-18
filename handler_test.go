@@ -147,3 +147,77 @@ func TestInvalidYAMLHandler(t *testing.T) {
 		t.Errorf("Handler did not return error")
 	}
 }
+
+func TestJSONHandlerMatched(t *testing.T) {
+	req, err := http.NewRequest("GET", "/urlshort", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build the JSONHandler using the mux as the fallback
+	json := `[{"path": "/urlshort", "url": "https://github.com/gophercises/urlshort"},
+{"path": "/urlshort-final", "url": "https://github.com/gophercises/urlshort/tree/solution"}]`
+
+	rr := httptest.NewRecorder()
+	handler, err := JSONHandler([]byte(json), nil)
+	if err != nil {
+		panic(err)
+	}
+
+	handler.ServeHTTP(rr, req)
+
+	res := rr.Result()
+	if status := res.StatusCode; status != http.StatusFound {
+		t.Errorf("Handler returned wrong status code: got %v want %v", status, http.StatusFound)
+	}
+
+	expected := "https://github.com/gophercises/urlshort"
+	fmt.Println(res.Header)
+	if expected != res.Header.Get("Location") {
+		t.Errorf("Handler returned wrong location: got %v want %v", res.Header.Get("Location"), expected)
+	}
+}
+
+func TestJSONHandlerNotMatched(t *testing.T) {
+	req, err := http.NewRequest("GET", "/foo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build the JSONHandler using the mux as the fallback
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "Hello, world!")
+	})
+
+	json := `[{"path": "/urlshort", "url": "https://github.com/gophercises/urlshort"},
+{"path": "/urlshort-final", "url": "https://github.com/gophercises/urlshort/tree/solution"}]`
+
+	rr := httptest.NewRecorder()
+	handler, err := JSONHandler([]byte(json), mux)
+	if err != nil {
+		panic(err)
+	}
+
+	handler.ServeHTTP(rr, req)
+
+	res := rr.Result()
+	if status := res.StatusCode; status != http.StatusOK {
+		t.Errorf("Handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	expected := "Hello, world!"
+	actual, _ := ioutil.ReadAll(res.Body)
+	if expected != string(actual) {
+		t.Errorf("Handler returned wrong location: got %v want %v", actual, expected)
+	}
+}
+
+func TestInvalidJSONHandler(t *testing.T) {
+	yaml := `foo`
+
+	_, err := JSONHandler([]byte(yaml), nil)
+	if err == nil {
+		t.Errorf("Handler did not return error")
+	}
+}

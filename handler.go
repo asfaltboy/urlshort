@@ -1,6 +1,7 @@
 package urlshort
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"gopkg.in/yaml.v2"
@@ -9,6 +10,16 @@ import (
 type mapPathHandler struct {
 	pathMap  map[string]string
 	fallback http.Handler
+}
+
+// Generate a path map from a list of maps as per marshalled config, and a fallback
+func newMapPathHandler(shortPaths []marshalledConfig, fallback http.Handler) mapPathHandler {
+	// Note: duplicate URLs are squashed
+	pathsToUrls := map[string]string{}
+	for _, v := range shortPaths {
+		pathsToUrls[v.Path] = v.URL
+	}
+	return mapPathHandler{pathsToUrls, fallback}
 }
 
 func (m *mapPathHandler) redirectToPath(w http.ResponseWriter, r *http.Request) {
@@ -31,39 +42,59 @@ func MapHandler(pathsToUrls map[string]string, fallback http.Handler) http.Handl
 	return http.HandlerFunc(m.redirectToPath)
 }
 
-type yamlConfig struct {
-	Path string
-	Url  string `yaml:"url"`
+type marshalledConfig struct {
+	Path string `yaml:"path" json:"path"`
+	URL  string `yaml:"url" json:"url"`
 }
 
 // YAMLHandler will parse the provided YAML and then return
-// an http.HandlerFunc (which also implements http.Handler)
-// that will attempt to map any paths to their corresponding
-// URL. If the path is not provided in the YAML, then the
-// fallback http.Handler will be called instead.
+// an http.HandlerFunc that will attempt to map any paths to their
+// corresponding URL. If the path is not provided in the YAML,
+// then the fallback http.Handler will be called instead.
 //
 // YAML is expected to be in the format:
 //
 //     - path: /some-path
 //       url: https://www.some-url.com/demo
 //
-// The only errors that can be returned all related to having
+// The only errors that can be returned are related to having
 // invalid YAML data.
 //
 // See MapHandler to create a similar http.HandlerFunc via
 // a mapping of paths to urls.
 func YAMLHandler(yml []byte, fallback http.Handler) (http.HandlerFunc, error) {
 	// parse YAML input
-	yamlPaths := []yamlConfig{}
+	yamlPaths := []marshalledConfig{}
 	err := yaml.UnmarshalStrict(yml, &yamlPaths)
 	if err != nil {
 		return nil, err
 	}
-	// Note: duplicate URLs are squashed
-	pathsToUrls := map[string]string{}
-	for _, v := range yamlPaths {
-		pathsToUrls[v.Path] = v.Url
+	m := newMapPathHandler(yamlPaths, fallback)
+	return http.HandlerFunc(m.redirectToPath), err
+}
+
+// JSONHandler will parse the privided JSON and return
+// an http.HandlerFunc that will attempt to map any paths to their
+// corresponding URL. If the path is not provided in the YAML,
+// then the fallback http.Handler will be called instead.
+//
+// JSON is expected to be in the format:
+//
+//     { "path": "/some-path",
+//       "url": "https://www.some-url.com/demo" }
+//
+// The only errors that can be returned are related to having
+// invalid JSON data.
+//
+// See MapHandler to create a similar http.HandlerFunc via
+// a mapping of paths to urls.
+func JSONHandler(j []byte, fallback http.Handler) (http.HandlerFunc, error) {
+	// parse JSON input
+	jsonPaths := []marshalledConfig{}
+	err := json.Unmarshal(j, &jsonPaths)
+	if err != nil {
+		return nil, err
 	}
-	m := mapPathHandler{pathsToUrls, fallback}
+	m := newMapPathHandler(jsonPaths, fallback)
 	return http.HandlerFunc(m.redirectToPath), err
 }
